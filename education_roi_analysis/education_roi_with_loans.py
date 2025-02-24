@@ -70,7 +70,6 @@ class LoanROICalculator:
           total_investment NUMERIC(10,2),
           earnings_premium_monthly NUMERIC(10,2),
           net_roi_after_loans_10yr NUMERIC(10,2),
-          roi_percentage_after_loans NUMERIC(10,2),
           debt_to_income_ratio NUMERIC(10,2),
           years_to_break_even NUMERIC(10,2),
           
@@ -101,12 +100,13 @@ class LoanROICalculator:
             educational_level_id,
             year_id,
             ROUND(CASE 
-              WHEN educational_level_id = 4 THEN cost * 2  -- 2 years for Associate's
-              WHEN educational_level_id = 6 THEN cost * 4  -- 4 years for Bachelor's
-              WHEN educational_level_id = 8 THEN cost * 6  -- 6 years for Master's
+              WHEN educational_level_id = 4 THEN cost   -- 2 years for Associate's
+              WHEN educational_level_id = 5 THEN cost   -- 4 years for all
+              WHEN educational_level_id = 6 THEN cost   -- 6 years for Bachelor's
               ELSE cost
             END::numeric, 2) as total_education_cost
           FROM expenditure_per_full_time_student
+          WHERE year_id = 13
         )
         SELECT 
           e.educational_level_id,
@@ -122,7 +122,7 @@ class LoanROICalculator:
         LEFT JOIN CostData c 
           ON e.educational_level_id = c.educational_level_id 
           AND e.year_id = c.year_id
-        WHERE e.annual_earnings > 0;
+        WHERE e.annual_earnings > 0 AND e.demographic_id = 15;
       """)
       
       rows = self.cur.fetchall()
@@ -161,9 +161,8 @@ class LoanROICalculator:
             total_education_cost, loan_amount, total_loan_cost, monthly_loan_payment,
             annual_earnings, baseline_earnings, net_monthly_earnings,
             total_investment, earnings_premium_monthly,
-            net_roi_after_loans_10yr, roi_percentage_after_loans,
-            debt_to_income_ratio, years_to_break_even
-          ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            net_roi_after_loans_10yr, debt_to_income_ratio, years_to_break_even
+          ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
           ON CONFLICT (educational_level_id, year_id, demographic_id) DO UPDATE
           SET 
             total_education_cost = EXCLUDED.total_education_cost,
@@ -176,7 +175,6 @@ class LoanROICalculator:
             total_investment = EXCLUDED.total_investment,
             earnings_premium_monthly = EXCLUDED.earnings_premium_monthly,
             net_roi_after_loans_10yr = EXCLUDED.net_roi_after_loans_10yr,
-            roi_percentage_after_loans = EXCLUDED.roi_percentage_after_loans,
             debt_to_income_ratio = EXCLUDED.debt_to_income_ratio,
             years_to_break_even = EXCLUDED.years_to_break_even;
         """, (
@@ -184,11 +182,11 @@ class LoanROICalculator:
           total_education_cost, loan_amount, total_loan_cost, monthly_loan_payment,
           annual_earnings, baseline_earnings, net_monthly_earnings,
           total_investment, earnings_premium_monthly,
-          net_roi_after_loans_10yr, roi_percentage_after_loans,
+          net_roi_after_loans_10yr, 
           debt_to_income_ratio, years_to_break_even
         ))
         self.cur.execute("DELETE FROM education_roi_with_loans WHERE total_education_cost = 0")
-
+        
       self.conn.commit()
       print("ROI calculations completed successfully")
     except Exception as e:
@@ -202,22 +200,17 @@ class LoanROICalculator:
       self.cur.execute("""
         SELECT 
           el.education_level_name,
-          ROUND(AVG(r.total_education_cost)::numeric, 2) as avg_education_cost,
-          ROUND(AVG(r.loan_amount)::numeric, 2) as avg_loan_amount,
-          ROUND(AVG(r.monthly_loan_payment)::numeric, 2) as avg_monthly_payment,
-          ROUND(AVG(r.annual_earnings)::numeric, 2) as avg_annual_earnings,
-          ROUND(AVG(r.net_monthly_earnings)::numeric, 2) as avg_net_monthly_earnings,
-          ROUND(AVG(r.roi_percentage_after_loans)::numeric, 2) as avg_roi_percentage,
-          ROUND(AVG(r.debt_to_income_ratio * 100)::numeric, 2) as avg_debt_to_income_percent,
-          ROUND(AVG(r.years_to_break_even)::numeric, 2) as avg_years_to_break_even
-        FROM education_roi_with_loans r
-        JOIN dim_educational_level el 
-          ON r.educational_level_id = el.educational_level_id
-        GROUP BY 
-          el.education_level_name,
-          el.education_level_order
-        ORDER BY 
-          el.education_level_order;
+          r.total_education_cost,
+          ROUND(r.loan_amount::numeric, 2) AS loan_amount,
+          ROUND(r.monthly_loan_payment::numeric, 2) AS monthly_payment,
+          ROUND(r.annual_earnings::numeric, 2) AS annual_earnings,
+          ROUND(r.net_monthly_earnings::numeric, 2) AS net_monthly_earnings,
+          ROUND(r.debt_to_income_ratio * 100::numeric, 2) AS debt_to_income_percent,
+          ROUND(r.years_to_break_even::numeric, 2) AS years_to_break_even
+        FROM 
+          education_roi_with_loans r
+        JOIN 
+          dim_educational_level el ON r.educational_level_id = el.educational_level_id;
       """)
       results = self.cur.fetchall()
       return results
@@ -233,26 +226,24 @@ def main():
     'host': 'your_host',
     'port': 'your_port'
   }
-
   calculator = LoanROICalculator(db_params)
 
   try:
     calculator.connect()
     calculator.create_roi_loan_table()
     calculator.calculate_roi_with_loans()
-    # results = calculator.get_roi_summary()
-    # print("\nDetailed ROI Summary Including Student Loans:")
-    # print("-------------------------------------------")
-    # for row in results:
-    #   print(f"\nEducation Level: {row[0]}")
-    #   print(f"Average Education Cost: ${row[1]:,.2f}")
-    #   print(f"Average Loan Amount: ${row[2]:,.2f}")
-    #   print(f"Average Monthly Payment: ${row[3]:,.2f}")
-    #   print(f"Average Annual Earnings: ${row[4]:,.2f}")
-    #   print(f"Average Net Monthly Earnings: ${row[5]:,.2f}")
-    #   print(f"ROI Percentage (After Loans): {row[6]:.2f}%")
-    #   print(f"Debt-to-Income Ratio: {row[7]:.2f}%")
-    #   print(f"Years to Break Even: {row[8]:.2f}")
+    results = calculator.get_roi_summary()
+    print("\nDetailed ROI Summary Including Student Loans:")
+    print("-------------------------------------------")
+    for row in results:
+      print(f"\nEducation Level: {row[0]}")
+      print(f"Education Cost: ${row[1]:,.2f}")
+      print(f"Loan Amount: ${row[2]:,.2f}")
+      print(f"Monthly Payment: ${row[3]:,.2f}")
+      print(f"Annual Earnings: ${row[4]:,.2f}")
+      print(f"Net Monthly Earnings: ${row[5]:,.2f}")
+      print(f"Debt-to-Income Ratio: {row[6]:.2f}%")
+      print(f"Years to Break Even: {row[7]:.2f}")
 
   except Exception as e:
     print(f"Error in main execution: {str(e)}")
